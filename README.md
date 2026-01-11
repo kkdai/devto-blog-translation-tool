@@ -8,6 +8,7 @@ A command-line tool that automatically translates your Dev.to draft articles fro
 - 🌐 Translates article titles and content to English using Gemini 2.0 Flash Lite
 - 🧠 Smart language detection - automatically skips articles with English titles
 - 📝 Preserves markdown formatting, code blocks, and technical terms
+- 🧹 Automatically removes Jekyll/Hugo frontmatter metadata before translation
 - 🚀 Automatically publishes translated articles to Dev.to
 - 🔒 Secure API key management using environment variables
 - ⚡ Fast and efficient translation processing with rate limiting
@@ -87,6 +88,7 @@ The tool will:
 3. **Publishes Automatically**: After translation, the article will be automatically published
 4. **Confirmation Required**: The tool will ask for confirmation before starting
 5. **Shows Article IDs**: Each processed article will display its ID so you can verify it's updating the correct article
+6. **Frontmatter Removal**: Automatically removes Jekyll/Hugo frontmatter (metadata between `---`) before translation to avoid translating metadata
 
 ### Example Output
 
@@ -118,7 +120,7 @@ Do you want to continue? (yes/no): yes
   Original Title: 使用 Gemini 3.0 Pro Image API 打造 PDF 文字優化工具
   Translating title... ✅
   Translated Title: Building a PDF Text Optimization Tool with Gemini 3.0 Pro Image API
-  Translating content... ✅
+  Translating content... (removing frontmatter) ✅
   Updating article ID 2457408 and publishing... ✅ Published!
 
 [2/300] Article ID: 2457409
@@ -154,7 +156,8 @@ devto-blog-translation-tool/
 │   ├── translator/
 │   │   └── translator.go        # Translation service logic
 │   └── utils/
-│       └── language.go          # Language detection utilities
+│       ├── language.go          # Language detection utilities
+│       └── markdown.go          # Markdown/frontmatter processing
 ├── .env                         # Your API keys (DO NOT COMMIT!)
 ├── .env.example                 # Template for environment variables
 ├── .gitignore                   # Git ignore file
@@ -162,6 +165,41 @@ devto-blog-translation-tool/
 ├── test_security.sh             # Security verification script
 └── README.md                    # This file
 ```
+
+## Frontmatter Handling
+
+The tool automatically detects and removes Jekyll/Hugo frontmatter before translation. This prevents metadata from being translated.
+
+**Example:**
+
+Original content with frontmatter:
+```markdown
+---
+title: [VS Code][Colab] Google Officially Releases Colab VS Code Plugin
+published: false
+date: 2025-11-14 00:00:00 UTC
+tags:
+canonical_url: https://www.evanlin.com/colab-vscode-plugin/
+---
+
+# Introduction
+
+This is the actual article content...
+```
+
+The tool will:
+1. Detect the frontmatter (content between `---`)
+2. Remove it before translation
+3. Only translate the actual article content:
+```markdown
+# Introduction
+
+This is the actual article content...
+```
+
+**Supported formats:**
+- Standard frontmatter: `--- ... ---`
+- Code block style: ` ``` ... ``` `
 
 ## Security
 

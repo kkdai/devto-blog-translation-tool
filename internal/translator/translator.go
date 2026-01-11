@@ -80,9 +80,15 @@ func (s *Service) TranslateDraftArticles(ctx context.Context) ([]TranslatedArtic
 		fmt.Printf("✅\n")
 		fmt.Printf("  Translated Title: %s\n", translatedTitle)
 
+		// Remove frontmatter before translation
+		contentToTranslate := utils.RemoveFrontmatter(article.BodyMarkdown)
+
 		// Translate body
 		fmt.Print("  Translating content... ")
-		translatedBody, err := s.geminiClient.Translate(ctx, article.BodyMarkdown)
+		if utils.HasFrontmatter(article.BodyMarkdown) {
+			fmt.Print("(removing frontmatter) ")
+		}
+		translatedBody, err := s.geminiClient.Translate(ctx, contentToTranslate)
 		if err != nil {
 			fmt.Printf("❌ Failed: %v\n", err)
 			failedCount++
