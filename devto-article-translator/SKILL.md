@@ -35,4 +35,4 @@ To use this skill, follow these steps:
 
 - **Caution**: This skill **updates and publishes** your existing draft articles. It does not create new articles.
 - The translation process preserves markdown formatting, code blocks, and tags.
-- The `gemini-2.0-flash-lite` model is used by default for cost-effective and high-quality translations.
+- The `gemini-2.5-flash` model is used by default for cost-effective and high-quality translations.

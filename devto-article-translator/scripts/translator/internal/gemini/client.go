@@ -18,7 +18,7 @@ type Client struct {
 func NewClient(apiKey string) *Client {
 	return &Client{
 		apiKey: apiKey,
-		model:  "gemini-2.0-flash-lite", // Using the latest available model
+		model:  "gemini-2.5-flash", // Using the latest available model
 	}
 }
 
