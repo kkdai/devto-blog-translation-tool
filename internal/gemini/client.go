@@ -2,6 +2,7 @@ package gemini
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/generative-ai-go/genai"
@@ -58,11 +59,11 @@ Translated text:`, text)
 	}
 
 	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
-		return "", fmt.Errorf("no translation generated")
+		return "", errors.New("no translation generated")
 	}
 
 	if resp.Candidates[0].FinishReason == genai.FinishReasonMaxTokens {
-		return "", fmt.Errorf("translation truncated: hit MaxOutputTokens (increase the limit or split the content)")
+		return "", errors.New("translation truncated: hit MaxOutputTokens (increase the limit or split the content)")
 	}
 
 	// Extract the translated text from the response
@@ -105,11 +106,11 @@ Translated title:`, title)
 	}
 
 	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
-		return "", fmt.Errorf("no translation generated")
+		return "", errors.New("no translation generated")
 	}
 
 	if resp.Candidates[0].FinishReason == genai.FinishReasonMaxTokens {
-		return "", fmt.Errorf("title translation truncated: hit MaxOutputTokens (thinking model consumed the token budget)")
+		return "", errors.New("title translation truncated: hit MaxOutputTokens (thinking model consumed the token budget)")
 	}
 
 	translatedTitle := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
