@@ -2,6 +2,7 @@ package devto
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,16 +22,16 @@ type Client struct {
 
 // Article represents a Dev.to article
 type Article struct {
-	ID                 int       `json:"id"`
-	Title              string    `json:"title"`
-	Description        string    `json:"description"`
-	BodyMarkdown       string    `json:"body_markdown"`
-	Published          bool      `json:"published"`
-	Slug               string    `json:"slug"`
-	URL                string    `json:"url"`
-	CreatedAt          time.Time `json:"created_at"`
-	PublishedAt        *time.Time `json:"published_at"`
-	Tags               []string  `json:"tags"`
+	ID           int        `json:"id"`
+	Title        string     `json:"title"`
+	Description  string     `json:"description"`
+	BodyMarkdown string     `json:"body_markdown"`
+	Published    bool       `json:"published"`
+	Slug         string     `json:"slug"`
+	URL          string     `json:"url"`
+	CreatedAt    time.Time  `json:"created_at"`
+	PublishedAt  *time.Time `json:"published_at"`
+	Tags         []string   `json:"tags"`
 }
 
 // NewClient creates a new Dev.to API client
@@ -44,7 +45,7 @@ func NewClient(apiKey string) *Client {
 }
 
 // GetDraftArticles fetches all unpublished (draft) articles with pagination
-func (c *Client) GetDraftArticles() ([]Article, error) {
+func (c *Client) GetDraftArticles(ctx context.Context) ([]Article, error) {
 	var allArticles []Article
 	page := 1
 	perPage := 30 // Dev.to API default/max per page
@@ -52,7 +53,7 @@ func (c *Client) GetDraftArticles() ([]Article, error) {
 	for {
 		url := fmt.Sprintf("%s/articles/me/unpublished?page=%d&per_page=%d", baseURL, page, perPage)
 
-		req, err := http.NewRequest("GET", url, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
@@ -100,17 +101,21 @@ func (c *Client) GetDraftArticles() ([]Article, error) {
 		page++
 
 		// Add a small delay to respect rate limits
-		time.Sleep(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 
 	return allArticles, nil
 }
 
 // GetAllArticles fetches all articles (published and unpublished)
-func (c *Client) GetAllArticles() ([]Article, error) {
+func (c *Client) GetAllArticles(ctx context.Context) ([]Article, error) {
 	url := fmt.Sprintf("%s/articles/me/all", baseURL)
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -157,7 +162,7 @@ type UpdateArticleFields struct {
 
 // PublishArticle updates an existing draft article with translated content and publishes it
 // This uses PUT /articles/:id to UPDATE the existing article, not create a new one
-func (c *Client) PublishArticle(articleID int, title, bodyMarkdown string, tags []string) error {
+func (c *Client) PublishArticle(ctx context.Context, articleID int, title, bodyMarkdown string, tags []string) error {
 	url := fmt.Sprintf("%s/articles/%d", baseURL, articleID)
 
 	published := true
@@ -175,7 +180,7 @@ func (c *Client) PublishArticle(articleID int, title, bodyMarkdown string, tags 
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	req, err := http.NewRequest("PUT", url, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}

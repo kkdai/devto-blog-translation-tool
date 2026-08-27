@@ -2,6 +2,7 @@ package translator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -39,13 +40,13 @@ func NewService(devtoClient *devto.Client, geminiClient *gemini.Client) *Service
 func (s *Service) TranslateDraftArticles(ctx context.Context) ([]TranslatedArticle, error) {
 	// Fetch draft articles from Dev.to
 	fmt.Println("🔍 Fetching draft articles from Dev.to...")
-	articles, err := s.devtoClient.GetDraftArticles()
+	articles, err := s.devtoClient.GetDraftArticles(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch draft articles: %w", err)
 	}
 
 	if len(articles) == 0 {
-		return nil, fmt.Errorf("no draft articles found")
+		return nil, errors.New("no draft articles found")
 	}
 
 	fmt.Printf("\n✅ Found %d draft article(s)\n\n", len(articles))
@@ -109,7 +110,7 @@ func (s *Service) TranslateDraftArticles(ctx context.Context) ([]TranslatedArtic
 
 		// Update and publish the article to Dev.to
 		fmt.Printf("  Updating article ID %d and publishing... ", article.ID)
-		err = s.devtoClient.PublishArticle(article.ID, translatedTitle, translatedBody, article.Tags)
+		err = s.devtoClient.PublishArticle(ctx, article.ID, translatedTitle, translatedBody, article.Tags)
 		if err != nil {
 			fmt.Printf("❌ Failed: %v\n", err)
 			failedCount++
