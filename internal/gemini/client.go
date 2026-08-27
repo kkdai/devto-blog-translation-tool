@@ -18,7 +18,7 @@ type Client struct {
 func NewClient(apiKey string) *Client {
 	return &Client{
 		apiKey: apiKey,
-		model:  "gemini-2.5-flash", // Using the latest available model
+		model:  "gemini-3-flash-preview", // Using the latest available model
 	}
 }
 
@@ -36,7 +36,11 @@ func (c *Client) Translate(ctx context.Context, text string) (string, error) {
 	model.SetTemperature(0.3) // Lower temperature for more consistent translations
 	model.SetTopP(0.95)
 	model.SetTopK(40)
-	model.SetMaxOutputTokens(8192)
+	// gemini-3-flash-preview is a thinking model: internal reasoning tokens
+	// count against MaxOutputTokens. Long articles easily exhaust a small
+	// budget, so allow generous headroom. Billing is on tokens actually used,
+	// so a high ceiling has no cost downside.
+	model.SetMaxOutputTokens(65536)
 
 	prompt := fmt.Sprintf(`Translate the following text to English.
 If the text is already in English, return it as-is.
@@ -55,6 +59,10 @@ Translated text:`, text)
 
 	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
 		return "", fmt.Errorf("no translation generated")
+	}
+
+	if resp.Candidates[0].FinishReason == genai.FinishReasonMaxTokens {
+		return "", fmt.Errorf("translation truncated: hit MaxOutputTokens (increase the limit or split the content)")
 	}
 
 	// Extract the translated text from the response
@@ -76,7 +84,11 @@ func (c *Client) TranslateTitle(ctx context.Context, title string) (string, erro
 	model.SetTemperature(0.3)
 	model.SetTopP(0.95)
 	model.SetTopK(40)
-	model.SetMaxOutputTokens(256)
+	// gemini-2.5-flash is a thinking model: internal reasoning tokens count
+	// against MaxOutputTokens. A tight limit (e.g. 256) gets consumed by
+	// thinking and truncates the title mid-output, so allow generous headroom.
+	// Billing is on tokens actually used, so a high ceiling has no cost downside.
+	model.SetMaxOutputTokens(4096)
 
 	prompt := fmt.Sprintf(`Translate this article title to English.
 If it's already in English, return it as-is.
@@ -94,6 +106,10 @@ Translated title:`, title)
 
 	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
 		return "", fmt.Errorf("no translation generated")
+	}
+
+	if resp.Candidates[0].FinishReason == genai.FinishReasonMaxTokens {
+		return "", fmt.Errorf("title translation truncated: hit MaxOutputTokens (thinking model consumed the token budget)")
 	}
 
 	translatedTitle := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])

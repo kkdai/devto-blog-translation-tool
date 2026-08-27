@@ -77,8 +77,17 @@ func (s *Service) TranslateDraftArticles(ctx context.Context) ([]TranslatedArtic
 			continue
 		}
 		translatedTitle = strings.TrimSpace(translatedTitle)
-		fmt.Printf("✅\n")
-		fmt.Printf("  Translated Title: %s\n", translatedTitle)
+		// Dev.to API enforces a 128-character limit on article titles.
+		const maxTitleLen = 128
+		if runes := []rune(translatedTitle); len(runes) > maxTitleLen {
+			translatedTitle = string(runes[:maxTitleLen])
+			fmt.Printf("✅\n")
+			fmt.Printf("  Translated Title: %s\n", translatedTitle)
+			fmt.Printf("  ⚠️  Title truncated to %d characters (Dev.to limit)\n", maxTitleLen)
+		} else {
+			fmt.Printf("✅\n")
+			fmt.Printf("  Translated Title: %s\n", translatedTitle)
+		}
 
 		// Remove frontmatter before translation
 		contentToTranslate := utils.RemoveFrontmatter(article.BodyMarkdown)
