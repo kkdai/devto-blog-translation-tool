@@ -1,22 +1,25 @@
 # Dev.to Blog Translation Tool
 
+[English](README.md) | [繁體中文](README-zhtw.md)
+
 A command-line tool that automatically translates your Dev.to draft articles from any language to English using Google's Gemini AI.
 
 ## Features
 
 - 🔍 Automatically fetches **all** draft articles from your Dev.to account (supports pagination for 300+ articles)
-- 🌐 Translates article titles and content to English using Gemini 2.0 Flash Lite
-- 🧠 Smart language detection - automatically skips articles with English titles
+- 🌐 Translates article titles and content to English using Gemini 3 Flash
+- 🧠 Smart language detection — automatically skips articles that already have English titles
 - 📝 Preserves markdown formatting, code blocks, and technical terms
 - 🧹 Automatically removes Jekyll/Hugo frontmatter metadata before translation
+- ✂️ Truncates translated titles to Dev.to's 128-character limit
 - 🚀 Automatically publishes translated articles to Dev.to
 - 🔒 Secure API key management using environment variables
-- ⚡ Fast and efficient translation processing with rate limiting
+- ⚡ Rate-limited, cancellable request handling
 - 📊 Detailed progress reporting and statistics
 
 ## Prerequisites
 
-- Go 1.21 or higher
+- Go 1.24 or higher (the version is declared in `go.mod`)
 - Dev.to account with API access
 - Google Gemini API key
 
@@ -24,7 +27,7 @@ A command-line tool that automatically translates your Dev.to draft articles fro
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/al03034132/devto-blog-translation-tool.git
+git clone https://github.com/kkdai/devto-blog-translation-tool.git
 cd devto-blog-translation-tool
 ```
 
@@ -54,7 +57,7 @@ GEMINI_API_KEY=your_gemini_api_key_here
 
 ### Google Gemini API Key
 
-1. Visit [Google AI Studio](https://makersuite.google.com/app/apikey)
+1. Visit [Google AI Studio](https://aistudio.google.com/app/apikey)
 2. Create a new API key
 3. Copy the key to your `.env` file
 
@@ -63,7 +66,7 @@ GEMINI_API_KEY=your_gemini_api_key_here
 Run the translation tool:
 
 ```bash
-go run cmd/translator/main.go
+go run ./cmd/translator
 ```
 
 The tool will:
@@ -73,7 +76,7 @@ The tool will:
 4. For each draft article:
    - Display the article ID and original title
    - Check if the title is already in English (skip if yes)
-   - Translate title and content to English using Gemini AI
+   - Translate title and content to English using Gemini
    - **UPDATE the existing draft article** with translated content
    - Publish the updated article
 5. Display a summary with statistics:
@@ -89,6 +92,7 @@ The tool will:
 4. **Confirmation Required**: The tool will ask for confirmation before starting
 5. **Shows Article IDs**: Each processed article will display its ID so you can verify it's updating the correct article
 6. **Frontmatter Removal**: Automatically removes Jekyll/Hugo frontmatter (metadata between `---`) before translation to avoid translating metadata
+7. **All-or-Nothing Run**: There is currently no dry-run mode or per-article filter. The tool processes every non-English draft in one pass
 
 ### Example Output
 
@@ -145,12 +149,15 @@ SUMMARY
 
 ```
 devto-blog-translation-tool/
+├── .github/
+│   └── workflows/
+│       └── go.yml               # CI: build and test on push/PR
 ├── cmd/
 │   └── translator/
 │       └── main.go              # Main application entry point
 ├── internal/
 │   ├── devto/
-│   │   └── client.go            # Dev.to API client (with pagination & publish)
+│   │   └── client.go            # Dev.to API client (pagination & publish)
 │   ├── gemini/
 │   │   └── client.go            # Gemini API client for translation
 │   ├── translator/
@@ -158,6 +165,7 @@ devto-blog-translation-tool/
 │   └── utils/
 │       ├── language.go          # Language detection utilities
 │       └── markdown.go          # Markdown/frontmatter processing
+├── devto-article-translator/    # Packaged skill distribution (separate Go module)
 ├── .env                         # Your API keys (DO NOT COMMIT!)
 ├── .env.example                 # Template for environment variables
 ├── .gitignore                   # Git ignore file
@@ -165,6 +173,28 @@ devto-blog-translation-tool/
 ├── test_security.sh             # Security verification script
 └── README.md                    # This file
 ```
+
+> **Note:** `devto-article-translator/` contains a packaged copy of the same
+> program with its own `go.mod`, so it is not built by `go build ./...` from the
+> repository root. Consolidating the two copies is tracked on the roadmap.
+
+## Translation Behavior
+
+### Language Detection
+
+`utils.IsEnglish` decides whether an article needs translating. An article is treated as **not** English if its title contains any CJK character (Han, Hiragana, Katakana, or Hangul). Otherwise the title counts as English when at least 80% of its letters and digits are ASCII Latin.
+
+Only the **title** is checked. If the title is English, the article is skipped entirely and its body is never translated.
+
+### Title Length
+
+Dev.to rejects titles longer than 128 characters. Translated titles are truncated to 128 runes (not bytes, so multi-byte characters are never split), and the run prints a warning when this happens.
+
+### Token Budget
+
+Gemini 3 Flash is a thinking model: its internal reasoning tokens count against `MaxOutputTokens`. The limits are therefore set generously — 65,536 for article bodies and 4,096 for titles — because a tight budget gets consumed by reasoning and truncates the output mid-sentence. Billing is based on tokens actually used, so a high ceiling costs nothing extra.
+
+If a response still stops at the limit, the tool detects `FinishReasonMaxTokens` and reports a truncation error rather than publishing a half-translated article.
 
 ## Frontmatter Handling
 
@@ -210,18 +240,37 @@ This is the actual article content...
 - Use `.env.example` as a template for other developers
 - API keys are never logged or displayed in the output
 
+Run the bundled check to verify no keys have leaked into tracked files:
+
+```bash
+./test_security.sh
+```
+
 ## Building
 
 To build a standalone executable:
 
 ```bash
-go build -o translator cmd/translator/main.go
+go build -o translator ./cmd/translator
 ```
 
 Then run:
 ```bash
 ./translator
 ```
+
+## Development
+
+```bash
+go build ./...   # compile
+go vet ./...     # static checks
+gofmt -l .       # formatting (should print nothing)
+go test ./...    # tests
+```
+
+> **Note:** The project does not have a test suite yet. `go test ./...`
+> currently exits successfully because there are no test files. Building one out
+> is the first item on the roadmap.
 
 ## Troubleshooting
 
@@ -236,6 +285,14 @@ Your Dev.to API key may be invalid or expired. Generate a new key from Dev.to se
 ### "failed to generate translation"
 
 Check that your Gemini API key is valid and you haven't exceeded the rate limits.
+
+### "translation truncated: hit MaxOutputTokens"
+
+The article was long enough that the model's reasoning plus output exhausted the token budget. Raise `SetMaxOutputTokens` in `internal/gemini/client.go`, or split the article before translating.
+
+### "API request failed with status 422"
+
+Dev.to rejected the update payload. The most common causes are a title over 128 characters or an invalid tag. Check the error body printed alongside the status code.
 
 ## Dependencies
 
