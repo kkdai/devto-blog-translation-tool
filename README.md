@@ -8,6 +8,7 @@ A command-line tool that automatically translates your Dev.to draft articles fro
 
 - 🔍 Automatically fetches **all** draft articles from your Dev.to account (supports pagination for 300+ articles)
 - 🌐 Translates article titles and content to English using Gemini 3 Flash
+- 🖼️ Optional image translation — detects images containing Chinese text, recreates English versions with Gemini, uploads them to Google Cloud Storage, and replaces the image URLs
 - 🧠 Smart language detection — automatically skips articles that already have English titles
 - 📝 Preserves markdown formatting, code blocks, and technical terms
 - 🧹 Automatically removes Jekyll/Hugo frontmatter metadata before translation
@@ -60,6 +61,30 @@ GEMINI_API_KEY=your_gemini_api_key_here
 1. Visit [Google AI Studio](https://aistudio.google.com/app/apikey)
 2. Create a new API key
 3. Copy the key to your `.env` file
+
+### Google Cloud Storage (Optional — Chinese Image Translation)
+
+When `GCS_BUCKET` is set, the tool scans each article for images (`![alt](url)` and `<img src="url">`), detects Chinese text with Gemini, generates an English version of any image that contains Chinese text, uploads it to GCS (`devto-images/<articleID>/<sha256-prefix>-en.<ext>`), and replaces the URL in the article before translating the body.
+
+If `GCS_BUCKET` is not set, image translation is disabled and the tool runs as usual.
+
+Setup steps:
+1. Authenticate locally with Application Default Credentials:
+   ```bash
+   gcloud auth application-default login
+   ```
+2. Create a GCS bucket and make it publicly readable (works with uniform bucket-level access — no per-object ACLs are set):
+   ```bash
+   gcloud storage buckets create gs://YOUR_BUCKET_NAME --uniform-bucket-level-access
+   gcloud storage buckets add-iam-policy-binding gs://YOUR_BUCKET_NAME \
+     --member=allUsers --role=roles/storage.objectViewer
+   ```
+3. Configure `.env`:
+   ```env
+   GCS_BUCKET=YOUR_BUCKET_NAME
+   # Optional (defaults to gemini-3-pro-image-preview)
+   GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview
+   ```
 
 ## Usage
 

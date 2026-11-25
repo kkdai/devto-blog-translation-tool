@@ -11,10 +11,16 @@ import (
 	"github.com/al03034132/devto-blog-translation-tool/internal/utils"
 )
 
+// ImageProcessor detects and replaces images containing Chinese text in markdown.
+type ImageProcessor interface {
+	ProcessMarkdown(ctx context.Context, articleID int, markdown string) string
+}
+
 // Service handles the translation of Dev.to articles
 type Service struct {
-	devtoClient  *devto.Client
-	geminiClient *gemini.Client
+	devtoClient    *devto.Client
+	geminiClient   *gemini.Client
+	imageProcessor ImageProcessor
 }
 
 // TranslatedArticle represents an article with its translation
@@ -34,6 +40,11 @@ func NewService(devtoClient *devto.Client, geminiClient *gemini.Client) *Service
 		devtoClient:  devtoClient,
 		geminiClient: geminiClient,
 	}
+}
+
+// SetImageProcessor configures an optional image processor for translating Chinese text in images.
+func (s *Service) SetImageProcessor(p ImageProcessor) {
+	s.imageProcessor = p
 }
 
 // TranslateDraftArticles fetches draft articles, translates them, and publishes them
@@ -92,6 +103,11 @@ func (s *Service) TranslateDraftArticles(ctx context.Context) ([]TranslatedArtic
 
 		// Remove frontmatter before translation
 		contentToTranslate := utils.RemoveFrontmatter(article.BodyMarkdown)
+
+		// Replace images containing Chinese text with English versions (when enabled)
+		if s.imageProcessor != nil {
+			contentToTranslate = s.imageProcessor.ProcessMarkdown(ctx, article.ID, contentToTranslate)
+		}
 
 		// Translate body
 		fmt.Print("  Translating content... ")

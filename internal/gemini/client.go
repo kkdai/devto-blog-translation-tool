@@ -9,18 +9,35 @@ import (
 	"google.golang.org/api/option"
 )
 
+// DefaultImageModel is the default Gemini model used for translating images.
+const DefaultImageModel = "gemini-3-pro-image-preview"
+
 // Client represents a Gemini API client
 type Client struct {
-	apiKey string
-	model  string
+	apiKey     string
+	model      string
+	imageModel string
 }
 
 // NewClient creates a new Gemini API client
 func NewClient(apiKey string) *Client {
 	return &Client{
-		apiKey: apiKey,
-		model:  "gemini-3-flash-preview", // Using the latest available model
+		apiKey:     apiKey,
+		model:      "gemini-3-flash-preview", // Using the latest available model
+		imageModel: DefaultImageModel,
 	}
+}
+
+// SetImageModel overrides the Gemini model used for image generation.
+func (c *Client) SetImageModel(model string) {
+	if model != "" {
+		c.imageModel = model
+	}
+}
+
+// ImageModel returns the configured Gemini model used for image generation.
+func (c *Client) ImageModel() string {
+	return c.imageModel
 }
 
 // Translate translates text to English using Gemini

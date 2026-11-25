@@ -10,6 +10,8 @@ import (
 
 	"github.com/al03034132/devto-blog-translation-tool/internal/devto"
 	"github.com/al03034132/devto-blog-translation-tool/internal/gemini"
+	"github.com/al03034132/devto-blog-translation-tool/internal/images"
+	"github.com/al03034132/devto-blog-translation-tool/internal/storage"
 	"github.com/al03034132/devto-blog-translation-tool/internal/translator"
 	"github.com/joho/godotenv"
 )
@@ -23,6 +25,8 @@ func main() {
 	// Get API keys from environment variables
 	devtoAPIKey := os.Getenv("DEVTO_API_KEY")
 	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
+	gcsBucket := strings.TrimSpace(os.Getenv("GCS_BUCKET"))
+	geminiImageModel := strings.TrimSpace(os.Getenv("GEMINI_IMAGE_MODEL"))
 
 	// Validate API keys
 	if devtoAPIKey == "" {
@@ -35,17 +39,35 @@ func main() {
 
 	// Never log the actual API keys!
 	fmt.Println("✅ API keys loaded successfully")
-	fmt.Println()
+
+	// Create context
+	ctx := context.Background()
 
 	// Initialize clients
 	devtoClient := devto.NewClient(devtoAPIKey)
 	geminiClient := gemini.NewClient(geminiAPIKey)
+	if geminiImageModel != "" {
+		geminiClient.SetImageModel(geminiImageModel)
+	}
 
 	// Create translation service
 	service := translator.NewService(devtoClient, geminiClient)
 
-	// Create context
-	ctx := context.Background()
+	// Initialize optional image translation (enabled when GCS_BUCKET is set)
+	if gcsBucket != "" {
+		uploader, err := storage.NewGCSUploader(ctx, gcsBucket)
+		if err != nil {
+			log.Fatalf("❌ Error initializing GCS uploader: %v", err)
+		}
+		defer uploader.Close()
+
+		imgProcessor := images.NewProcessor(geminiClient, geminiClient, uploader)
+		service.SetImageProcessor(imgProcessor)
+		fmt.Printf("✅ Image translation enabled (GCS bucket: %s, model: %s)\n", gcsBucket, geminiClient.ImageModel())
+	} else {
+		fmt.Println("ℹ️  GCS_BUCKET not set; Chinese image translation is disabled")
+	}
+	fmt.Println()
 
 	// Display warning and get confirmation
 	fmt.Println("⚠️  WARNING ⚠️")
@@ -53,8 +75,14 @@ func main() {
 	fmt.Println("This tool will:")
 	fmt.Println("1. Fetch ALL your draft articles from Dev.to")
 	fmt.Println("2. Translate non-English articles to English")
-	fmt.Println("3. UPDATE the existing draft articles with translations")
-	fmt.Println("4. PUBLISH the updated articles")
+	if gcsBucket != "" {
+		fmt.Println("3. Replace images containing Chinese text with Gemini-generated English versions uploaded to GCS")
+		fmt.Println("4. UPDATE the existing draft articles with translations")
+		fmt.Println("5. PUBLISH the updated articles")
+	} else {
+		fmt.Println("3. UPDATE the existing draft articles with translations")
+		fmt.Println("4. PUBLISH the updated articles")
+	}
 	fmt.Println()
 	fmt.Println("Note: This will UPDATE your existing drafts,")
 	fmt.Println("      NOT create new articles.")

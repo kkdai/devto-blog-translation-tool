@@ -8,6 +8,7 @@
 
 - 🔍 自動抓取 Dev.to 帳號中的**所有**草稿文章（支援分頁，300 篇以上也沒問題）
 - 🌐 使用 Gemini 3 Flash 翻譯文章標題與內文
+- 🖼️ 選用圖片翻譯 — 自動偵測文章中含中文的圖片，使用 Gemini 重新生成英文版、上傳到 Google Cloud Storage 並替換圖片網址
 - 🧠 智慧語言偵測 — 標題已經是英文的文章會自動跳過
 - 📝 保留 markdown 格式、程式碼區塊與技術名詞
 - 🧹 翻譯前自動移除 Jekyll/Hugo frontmatter 中繼資料
@@ -60,6 +61,30 @@ GEMINI_API_KEY=your_gemini_api_key_here
 1. 前往 [Google AI Studio](https://aistudio.google.com/app/apikey)
 2. 建立一組新的 API 金鑰
 3. 把金鑰複製到 `.env`
+
+### Google Cloud Storage（選用 — 含中文圖片翻譯）
+
+設定 `GCS_BUCKET` 後，工具會在翻譯內文前掃描文章中的圖片（`![alt](url)` 與 `<img src="url">`），用 Gemini 偵測圖片是否含有中文；若有中文則生成英文版圖片、上傳至 GCS（路徑 `devto-images/<articleID>/<sha256前16碼>-en.<ext>`），並把文章內的圖片網址替換為新的公開 GCS 網址。
+
+若未設定 `GCS_BUCKET`，圖片翻譯功能會自動停用，其餘翻譯流程完全照舊。
+
+前置設定：
+1. 使用 Application Default Credentials 完成本機認證：
+   ```bash
+   gcloud auth application-default login
+   ```
+2. 建立 GCS bucket 並設為公開可讀（支援 uniform bucket-level access，程式不會設定單一物件 ACL）：
+   ```bash
+   gcloud storage buckets create gs://YOUR_BUCKET_NAME --uniform-bucket-level-access
+   gcloud storage buckets add-iam-policy-binding gs://YOUR_BUCKET_NAME \
+     --member=allUsers --role=roles/storage.objectViewer
+   ```
+3. 在 `.env` 中加入設定：
+   ```env
+   GCS_BUCKET=YOUR_BUCKET_NAME
+   # 選用（預設為 gemini-3-pro-image-preview）
+   GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview
+   ```
 
 ## 使用方式
 
