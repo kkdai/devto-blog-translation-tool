@@ -19,13 +19,18 @@ type chineseDetectionResult struct {
 	HasChineseText bool `json:"has_chinese_text"`
 }
 
+func (c *Client) newGenAIClient(ctx context.Context) (*genai.Client, error) {
+	return genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:      c.apiKey,
+		Backend:     genai.BackendGeminiAPI,
+		HTTPOptions: genai.HTTPOptions{APIVersion: "v1beta"},
+	})
+}
+
 // DetectChineseText uses the Gemini vision model to determine whether an image contains Chinese text.
 // If the model response cannot be parsed as JSON, it returns false without an error.
 func (c *Client) DetectChineseText(ctx context.Context, imageData []byte, mimeType string) (bool, error) {
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  c.apiKey,
-		Backend: genai.BackendGeminiAPI,
-	})
+	client, err := c.newGenAIClient(ctx)
 	if err != nil {
 		return false, fmt.Errorf("failed to create Gemini client: %w", err)
 	}
@@ -72,10 +77,7 @@ func parseChineseDetectionJSON(raw string) bool {
 
 // TranslateImage uses the configured Gemini image model to recreate an image with Chinese text translated to English.
 func (c *Client) TranslateImage(ctx context.Context, imageData []byte, mimeType string) ([]byte, string, error) {
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  c.apiKey,
-		Backend: genai.BackendGeminiAPI,
-	})
+	client, err := c.newGenAIClient(ctx)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create Gemini client: %w", err)
 	}
