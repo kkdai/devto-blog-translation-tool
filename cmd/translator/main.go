@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/al03034132/devto-blog-translation-tool/internal/devto"
 	"github.com/al03034132/devto-blog-translation-tool/internal/gemini"
+	"github.com/al03034132/devto-blog-translation-tool/internal/images"
+	"github.com/al03034132/devto-blog-translation-tool/internal/storage"
 	"github.com/al03034132/devto-blog-translation-tool/internal/translator"
 	"github.com/joho/godotenv"
 )
@@ -23,6 +26,11 @@ func main() {
 	// Get API keys from environment variables
 	devtoAPIKey := os.Getenv("DEVTO_API_KEY")
 	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
+	gcsBucket := strings.TrimSpace(os.Getenv("GCS_BUCKET"))
+	geminiTextModel := strings.TrimSpace(os.Getenv("GEMINI_TEXT_MODEL"))
+	geminiImageModel := strings.TrimSpace(os.Getenv("GEMINI_IMAGE_MODEL"))
+	geminiImageSize := strings.TrimSpace(os.Getenv("GEMINI_IMAGE_SIZE"))
+	imageMaxChineseCharsRaw := strings.TrimSpace(os.Getenv("IMAGE_MAX_CHINESE_CHARS"))
 
 	// Validate API keys
 	if devtoAPIKey == "" {
@@ -35,17 +43,53 @@ func main() {
 
 	// Never log the actual API keys!
 	fmt.Println("✅ API keys loaded successfully")
-	fmt.Println()
+
+	// Create context
+	ctx := context.Background()
 
 	// Initialize clients
 	devtoClient := devto.NewClient(devtoAPIKey)
 	geminiClient := gemini.NewClient(geminiAPIKey)
+	if geminiTextModel != "" {
+		geminiClient.SetTextModel(geminiTextModel)
+	}
+	if geminiImageModel != "" {
+		geminiClient.SetImageModel(geminiImageModel)
+	}
+	if geminiImageSize != "" {
+		if err := geminiClient.SetImageSize(geminiImageSize); err != nil {
+			fmt.Printf("⚠️  Invalid GEMINI_IMAGE_SIZE %q (%v), using default %s\n", geminiImageSize, err, geminiClient.ImageSize())
+		}
+	}
+	fmt.Printf("✅ Gemini text model: %s\n", geminiClient.TextModel())
 
 	// Create translation service
 	service := translator.NewService(devtoClient, geminiClient)
 
-	// Create context
-	ctx := context.Background()
+	// Initialize optional image translation (enabled when GCS_BUCKET is set)
+	if gcsBucket != "" {
+		uploader, err := storage.NewGCSUploader(ctx, gcsBucket)
+		if err != nil {
+			log.Fatalf("❌ Error initializing GCS uploader: %v", err)
+		}
+		defer uploader.Close()
+
+		imgProcessor := images.NewProcessor(geminiClient, geminiClient, geminiClient, uploader)
+		if imageMaxChineseCharsRaw != "" {
+			maxChars, err := strconv.Atoi(imageMaxChineseCharsRaw)
+			if err != nil || maxChars <= 0 {
+				fmt.Printf("⚠️  Invalid IMAGE_MAX_CHINESE_CHARS %q, using default %d\n", imageMaxChineseCharsRaw, imgProcessor.MaxChineseChars())
+			} else {
+				imgProcessor.WithMaxChineseChars(maxChars)
+			}
+		}
+		service.SetImageProcessor(imgProcessor)
+		fmt.Printf("✅ Image translation enabled (GCS bucket: %s, model: %s, size: %s, max Chinese chars: %d)\n",
+			gcsBucket, geminiClient.ImageModel(), geminiClient.ImageSize(), imgProcessor.MaxChineseChars())
+	} else {
+		fmt.Println("ℹ️  GCS_BUCKET not set; Chinese image translation is disabled")
+	}
+	fmt.Println()
 
 	// Display warning and get confirmation
 	fmt.Println("⚠️  WARNING ⚠️")
@@ -53,8 +97,14 @@ func main() {
 	fmt.Println("This tool will:")
 	fmt.Println("1. Fetch ALL your draft articles from Dev.to")
 	fmt.Println("2. Translate non-English articles to English")
-	fmt.Println("3. UPDATE the existing draft articles with translations")
-	fmt.Println("4. PUBLISH the updated articles")
+	if gcsBucket != "" {
+		fmt.Println("3. Replace images containing Chinese text with Gemini-generated English versions uploaded to GCS")
+		fmt.Println("4. UPDATE the existing draft articles with translations")
+		fmt.Println("5. PUBLISH the updated articles")
+	} else {
+		fmt.Println("3. UPDATE the existing draft articles with translations")
+		fmt.Println("4. PUBLISH the updated articles")
+	}
 	fmt.Println()
 	fmt.Println("Note: This will UPDATE your existing drafts,")
 	fmt.Println("      NOT create new articles.")

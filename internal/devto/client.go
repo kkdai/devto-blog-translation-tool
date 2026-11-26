@@ -11,7 +11,10 @@ import (
 )
 
 const (
-	baseURL = "https://dev.to/api"
+	baseURL        = "https://dev.to/api"
+	userAgent      = "devto-blog-translation-tool/1.0"
+	defaultTimeout = 90 * time.Second
+	maxRetries     = 3
 )
 
 // Client represents a Dev.to API client
@@ -39,9 +42,86 @@ func NewClient(apiKey string) *Client {
 	return &Client{
 		apiKey: apiKey,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: defaultTimeout,
 		},
 	}
+}
+
+// doWithRetry executes an HTTP request builder with exponential backoff retries on transient errors or timeouts
+func (c *Client) doWithRetry(ctx context.Context, buildReq func() (*http.Request, error)) (*http.Response, []byte, error) {
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		req, err := buildReq()
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("api-key", c.apiKey)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/vnd.forem.api-v1+json")
+		req.Header.Set("User-Agent", userAgent)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to execute request: %w", err)
+			if ctx.Err() != nil {
+				return nil, nil, ctx.Err()
+			}
+			if attempt < maxRetries {
+				backoff := time.Duration(attempt*2) * time.Second
+				fmt.Printf("  ⚠️ Request failed (attempt %d/%d): %v. Retrying in %v...\n", attempt, maxRetries, err, backoff)
+				select {
+				case <-ctx.Done():
+					return nil, nil, ctx.Err()
+				case <-time.After(backoff):
+				}
+				continue
+			}
+			return nil, nil, lastErr
+		}
+
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = fmt.Errorf("failed to read response body: %w", readErr)
+			if attempt < maxRetries {
+				backoff := time.Duration(attempt*2) * time.Second
+				fmt.Printf("  ⚠️ Reading body failed (attempt %d/%d): %v. Retrying in %v...\n", attempt, maxRetries, readErr, backoff)
+				select {
+				case <-ctx.Done():
+					return nil, nil, ctx.Err()
+				case <-time.After(backoff):
+				}
+				continue
+			}
+			return nil, nil, lastErr
+		}
+
+		// Retry on 429 Too Many Requests or 5xx server errors
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			lastErr = fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+			if attempt < maxRetries {
+				backoff := time.Duration(attempt*3) * time.Second
+				fmt.Printf("  ⚠️ Server returned status %d (attempt %d/%d). Retrying in %v...\n", resp.StatusCode, attempt, maxRetries, backoff)
+				select {
+				case <-ctx.Done():
+					return nil, nil, ctx.Err()
+				case <-time.After(backoff):
+				}
+				continue
+			}
+			return resp, body, lastErr
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return resp, body, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+		}
+
+		return resp, body, nil
+	}
+
+	return nil, nil, lastErr
 }
 
 // GetDraftArticles fetches all unpublished (draft) articles with pagination
@@ -53,30 +133,11 @@ func (c *Client) GetDraftArticles(ctx context.Context) ([]Article, error) {
 	for {
 		url := fmt.Sprintf("%s/articles/me/unpublished?page=%d&per_page=%d", baseURL, page, perPage)
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		_, body, err := c.doWithRetry(ctx, func() (*http.Request, error) {
+			return http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create request: %w", err)
-		}
-
-		// Set required headers
-		req.Header.Set("api-key", c.apiKey)
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("failed to execute request: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("failed to read response body: %w", err)
+			return nil, err
 		}
 
 		var articles []Article
@@ -100,11 +161,11 @@ func (c *Client) GetDraftArticles(ctx context.Context) ([]Article, error) {
 
 		page++
 
-		// Add a small delay to respect rate limits
+		// Add a delay to respect rate limits
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(300 * time.Millisecond):
 		}
 	}
 
@@ -115,28 +176,11 @@ func (c *Client) GetDraftArticles(ctx context.Context) ([]Article, error) {
 func (c *Client) GetAllArticles(ctx context.Context) ([]Article, error) {
 	url := fmt.Sprintf("%s/articles/me/all", baseURL)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	_, body, err := c.doWithRetry(ctx, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("api-key", c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+		return nil, err
 	}
 
 	var articles []Article
@@ -180,23 +224,11 @@ func (c *Client) PublishArticle(ctx context.Context, articleID int, title, bodyM
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewBuffer(jsonData))
+	_, _, err = c.doWithRetry(ctx, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(jsonData))
+	})
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("api-key", c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+		return err
 	}
 
 	return nil

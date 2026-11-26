@@ -7,7 +7,8 @@
 ## 功能特色
 
 - 🔍 自動抓取 Dev.to 帳號中的**所有**草稿文章（支援分頁，300 篇以上也沒問題）
-- 🌐 使用 Gemini 3 Flash 翻譯文章標題與內文
+- 🌐 使用 Gemini 4 Neon（`gemini-4-neon`，可由 `GEMINI_TEXT_MODEL` 覆寫）翻譯文章標題與內文
+- 🖼️ 選用圖片翻譯 — 自動偵測文章中含中文的圖片，使用 Gemini 重新生成英文版、上傳到 Google Cloud Storage 並替換圖片網址
 - 🧠 智慧語言偵測 — 標題已經是英文的文章會自動跳過
 - 📝 保留 markdown 格式、程式碼區塊與技術名詞
 - 🧹 翻譯前自動移除 Jekyll/Hugo frontmatter 中繼資料
@@ -60,6 +61,38 @@ GEMINI_API_KEY=your_gemini_api_key_here
 1. 前往 [Google AI Studio](https://aistudio.google.com/app/apikey)
 2. 建立一組新的 API 金鑰
 3. 把金鑰複製到 `.env`
+
+### Google Cloud Storage（選用 — 含中文圖片翻譯）
+
+設定 `GCS_BUCKET` 後，工具會在翻譯內文前掃描文章中的圖片（`![alt](url)` 與 `<img src="url">`），用 Gemini 偵測圖片是否含有中文；若有中文則依原圖最接近的支援比例與指定解析度生成英文版圖片，並將原圖與生成圖一併送交驗證確認已無中文且保留所有主要內容後，才上傳至 GCS（路徑 `devto-images/<articleID>/<sha256前16碼>-en.<ext>`）並替換文章內的圖片網址。
+
+文字密集的資訊圖或架構圖若估計中文字數超過 `IMAGE_MAX_CHINESE_CHARS`（預設 `60`），會直接跳過重畫並保留原圖，以避免重繪時出現亂碼或錯字；若生成後驗證仍偵測到中文、發現主要內容缺失或驗證失敗，也會保守保留原圖不上傳。
+
+若未設定 `GCS_BUCKET`，圖片翻譯功能會自動停用，其餘翻譯流程完全照舊。
+
+前置設定：
+1. 使用 Application Default Credentials 完成本機認證：
+   ```bash
+   gcloud auth application-default login
+   ```
+2. 建立 GCS bucket 並設為公開可讀（支援 uniform bucket-level access，程式不會設定單一物件 ACL）：
+   ```bash
+   gcloud storage buckets create gs://YOUR_BUCKET_NAME --uniform-bucket-level-access
+   gcloud storage buckets add-iam-policy-binding gs://YOUR_BUCKET_NAME \
+     --member=allUsers --role=roles/storage.objectViewer
+   ```
+3. 在 `.env` 中加入設定：
+   ```env
+   # 選用：文字翻譯與圖片驗證模型（預設為 gemini-4-neon）
+   GEMINI_TEXT_MODEL=gemini-4-neon
+   GCS_BUCKET=YOUR_BUCKET_NAME
+   # 選用（預設為 gemini-3-pro-image）
+   GEMINI_IMAGE_MODEL=gemini-3-pro-image
+   # 選用：輸出解析度 1K、2K 或 4K（預設為 2K）
+   GEMINI_IMAGE_SIZE=2K
+   # 選用：超過此估計中文字數的密集圖片直接跳過（預設為 60）
+   IMAGE_MAX_CHINESE_CHARS=60
+   ```
 
 ## 使用方式
 
@@ -192,9 +225,9 @@ Dev.to 不接受超過 128 字元的標題。翻譯後的標題會截斷至 128 
 
 ### Token 預算
 
-Gemini 3 Flash 是 thinking model：模型內部推理所用的 token 也會計入 `MaxOutputTokens`。因此這裡把上限開得很寬 — 內文 65,536、標題 4,096 — 因為預算抓太緊會被推理吃光，導致輸出在中途被截斷。計費是以實際用掉的 token 計算，所以把上限開高不會多花錢。
+Gemini 4 Neon（`gemini-4-neon`）是 thinking model：模型內部推理所用的 token 也會計入 `MaxOutputTokens`。因此這裡把上限開得很寬 — 內文 65,536、標題 4,096 — 因為預算抓太緊會被推理吃光，導致輸出在中途被截斷。計費是以實際用掉的 token 計算，所以把上限開高不會多花錢。
 
-如果回應仍然卡在上限，工具會偵測到 `FinishReasonMaxTokens` 並回報截斷錯誤，而不是把翻譯到一半的文章發布出去。
+如果回應仍然卡在 `FinishReasonMaxTokens`（或回傳空內容），工具會自動重試一次；第二次仍失敗才回報截斷錯誤，而不是把翻譯到一半的文章發布出去。
 
 ## Frontmatter 處理
 
