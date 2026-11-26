@@ -27,6 +27,14 @@ func (m *mockTranslator) TranslateImage(ctx context.Context, imageData []byte, m
 	return m.fn(ctx, imageData, mimeType)
 }
 
+type mockVerifier struct {
+	fn func(ctx context.Context, original []byte, originalMIME string, generated []byte, generatedMIME string) (gemini.Verification, error)
+}
+
+func (m *mockVerifier) VerifyTranslatedImage(ctx context.Context, original []byte, originalMIME string, generated []byte, generatedMIME string) (gemini.Verification, error) {
+	return m.fn(ctx, original, originalMIME, generated, generatedMIME)
+}
+
 type mockUploader struct {
 	fn func(ctx context.Context, objectName string, data []byte, contentType string) (string, error)
 }
@@ -60,19 +68,23 @@ func TestProcessor_ProcessMarkdown(t *testing.T) {
 		var uploadedObject, uploadedContentType string
 		detectCalls := 0
 		translateCalls := 0
+		verifyCalls := 0
 
 		proc := NewProcessor(
 			&mockDetector{fn: func(_ context.Context, _ []byte, _ string) (gemini.Detection, error) {
 				detectCalls++
-				if detectCalls == 1 {
-					return gemini.Detection{HasChinese: true, ChineseChars: 20}, nil
-				}
-				// Post-generation verification: no Chinese text remaining.
-				return gemini.Detection{HasChinese: false, ChineseChars: 0}, nil
+				return gemini.Detection{HasChinese: true, ChineseChars: 20}, nil
 			}},
 			&mockTranslator{fn: func(_ context.Context, _ []byte, _ string) ([]byte, string, error) {
 				translateCalls++
 				return []byte("english-image-bytes"), "image/png", nil
+			}},
+			&mockVerifier{fn: func(_ context.Context, orig []byte, origMIME string, gen []byte, genMIME string) (gemini.Verification, error) {
+				verifyCalls++
+				if len(orig) == 0 || origMIME != "image/png" || string(gen) != "english-image-bytes" || genMIME != "image/png" {
+					t.Errorf("unexpected VerifyTranslatedImage args: origLen=%d origMIME=%q gen=%q genMIME=%q", len(orig), origMIME, string(gen), genMIME)
+				}
+				return gemini.Verification{HasChineseText: false, PreservesContent: true, Reason: "ok"}, nil
 			}},
 			&mockUploader{fn: func(_ context.Context, objectName string, _ []byte, contentType string) (string, error) {
 				uploadedObject = objectName
@@ -85,11 +97,14 @@ func TestProcessor_ProcessMarkdown(t *testing.T) {
 		md := "Here is an image:\n![arch](" + imgURL + ")\nAnd again: <img src=\"" + imgURL + "\">"
 		got := proc.ProcessMarkdown(context.Background(), 12345, md)
 
-		if detectCalls != 2 {
-			t.Errorf("expected 2 detect calls (initial + verification) for duplicate URL, got %d", detectCalls)
+		if detectCalls != 1 {
+			t.Errorf("expected 1 detect call for duplicate URL, got %d", detectCalls)
 		}
 		if translateCalls != 1 {
 			t.Errorf("expected 1 translate call, got %d", translateCalls)
+		}
+		if verifyCalls != 1 {
+			t.Errorf("expected 1 verify call, got %d", verifyCalls)
 		}
 		if !strings.HasPrefix(uploadedObject, "devto-images/12345/") || !strings.HasSuffix(uploadedObject, "-en.png") {
 			t.Errorf("unexpected object name: %q", uploadedObject)
@@ -107,20 +122,21 @@ func TestProcessor_ProcessMarkdown(t *testing.T) {
 	t.Run("keeps original image and skips upload when generated image still has Chinese text", func(t *testing.T) {
 		detectCalls := 0
 		translateCalls := 0
+		verifyCalls := 0
 		uploadCalled := false
 
 		proc := NewProcessor(
 			&mockDetector{fn: func(_ context.Context, _ []byte, _ string) (gemini.Detection, error) {
 				detectCalls++
-				if detectCalls == 1 {
-					return gemini.Detection{HasChinese: true, ChineseChars: 15}, nil
-				}
-				// Verification finds Chinese text still present (even just 1 char).
-				return gemini.Detection{HasChinese: true, ChineseChars: 1}, nil
+				return gemini.Detection{HasChinese: true, ChineseChars: 15}, nil
 			}},
 			&mockTranslator{fn: func(_ context.Context, _ []byte, _ string) ([]byte, string, error) {
 				translateCalls++
 				return []byte("garbled-image-bytes"), "image/png", nil
+			}},
+			&mockVerifier{fn: func(_ context.Context, _ []byte, _ string, _ []byte, _ string) (gemini.Verification, error) {
+				verifyCalls++
+				return gemini.Verification{HasChineseText: true, PreservesContent: true, Reason: "Chinese text remains"}, nil
 			}},
 			&mockUploader{fn: func(_ context.Context, _ string, _ []byte, _ string) (string, error) {
 				uploadCalled = true
@@ -134,31 +150,67 @@ func TestProcessor_ProcessMarkdown(t *testing.T) {
 		if got != md {
 			t.Errorf("expected original markdown preserved, got %q", got)
 		}
-		if detectCalls != 2 {
-			t.Errorf("expected 2 detect calls, got %d", detectCalls)
+		if detectCalls != 1 {
+			t.Errorf("expected 1 detect call, got %d", detectCalls)
 		}
 		if translateCalls != 1 {
 			t.Errorf("expected 1 translate call, got %d", translateCalls)
+		}
+		if verifyCalls != 1 {
+			t.Errorf("expected 1 verify call, got %d", verifyCalls)
 		}
 		if uploadCalled {
 			t.Error("expected Upload not to be called when verification detects Chinese text")
 		}
 	})
 
-	t.Run("keeps original image when post-generation verification errors", func(t *testing.T) {
-		detectCalls := 0
+	t.Run("keeps original image and skips upload when generated image loses content", func(t *testing.T) {
+		verifyCalls := 0
 		uploadCalled := false
 
 		proc := NewProcessor(
 			&mockDetector{fn: func(_ context.Context, _ []byte, _ string) (gemini.Detection, error) {
-				detectCalls++
-				if detectCalls == 1 {
-					return gemini.Detection{HasChinese: true, ChineseChars: 10}, nil
-				}
-				return gemini.Detection{}, errors.New("verify timeout")
+				return gemini.Detection{HasChinese: true, ChineseChars: 12}, nil
+			}},
+			&mockTranslator{fn: func(_ context.Context, _ []byte, _ string) ([]byte, string, error) {
+				return []byte("cropped-image-bytes"), "image/png", nil
+			}},
+			&mockVerifier{fn: func(_ context.Context, _ []byte, _ string, _ []byte, _ string) (gemini.Verification, error) {
+				verifyCalls++
+				return gemini.Verification{HasChineseText: false, PreservesContent: false, Reason: "missing dialog panel"}, nil
+			}},
+			&mockUploader{fn: func(_ context.Context, _ string, _ []byte, _ string) (string, error) {
+				uploadCalled = true
+				return "", nil
+			}},
+		).WithHTTPClient(server.Client())
+
+		md := "![arch](" + server.URL + "/chinese.png)"
+		got := proc.ProcessMarkdown(context.Background(), 42, md)
+
+		if got != md {
+			t.Errorf("expected original markdown preserved when content is lost, got %q", got)
+		}
+		if verifyCalls != 1 {
+			t.Errorf("expected 1 verify call, got %d", verifyCalls)
+		}
+		if uploadCalled {
+			t.Error("expected Upload not to be called when generated image loses content")
+		}
+	})
+
+	t.Run("keeps original image when post-generation verification errors", func(t *testing.T) {
+		uploadCalled := false
+
+		proc := NewProcessor(
+			&mockDetector{fn: func(_ context.Context, _ []byte, _ string) (gemini.Detection, error) {
+				return gemini.Detection{HasChinese: true, ChineseChars: 10}, nil
 			}},
 			&mockTranslator{fn: func(_ context.Context, _ []byte, _ string) ([]byte, string, error) {
 				return []byte("english-image-bytes"), "image/png", nil
+			}},
+			&mockVerifier{fn: func(_ context.Context, _ []byte, _ string, _ []byte, _ string) (gemini.Verification, error) {
+				return gemini.Verification{}, errors.New("verify timeout")
 			}},
 			&mockUploader{fn: func(_ context.Context, _ string, _ []byte, _ string) (string, error) {
 				uploadCalled = true
@@ -188,6 +240,9 @@ func TestProcessor_ProcessMarkdown(t *testing.T) {
 			&mockTranslator{fn: func(_ context.Context, _ []byte, _ string) ([]byte, string, error) {
 				translateCalled = true
 				return nil, "", nil
+			}},
+			&mockVerifier{fn: func(_ context.Context, _ []byte, _ string, _ []byte, _ string) (gemini.Verification, error) {
+				return gemini.Verification{HasChineseText: false, PreservesContent: true}, nil
 			}},
 			&mockUploader{fn: func(_ context.Context, _ string, _ []byte, _ string) (string, error) {
 				uploadCalled = true
@@ -221,6 +276,9 @@ func TestProcessor_ProcessMarkdown(t *testing.T) {
 				translateCalled = true
 				return nil, "", nil
 			}},
+			&mockVerifier{fn: func(_ context.Context, _ []byte, _ string, _ []byte, _ string) (gemini.Verification, error) {
+				return gemini.Verification{HasChineseText: false, PreservesContent: true}, nil
+			}},
 			&mockUploader{fn: func(_ context.Context, _ string, _ []byte, _ string) (string, error) {
 				uploadCalled = true
 				return "", nil
@@ -251,6 +309,9 @@ func TestProcessor_ProcessMarkdown(t *testing.T) {
 			&mockTranslator{fn: func(_ context.Context, _ []byte, _ string) ([]byte, string, error) {
 				return nil, "", errors.New("quota exceeded")
 			}},
+			&mockVerifier{fn: func(_ context.Context, _ []byte, _ string, _ []byte, _ string) (gemini.Verification, error) {
+				return gemini.Verification{HasChineseText: false, PreservesContent: true}, nil
+			}},
 			&mockUploader{fn: func(_ context.Context, _ string, _ []byte, _ string) (string, error) {
 				uploadCalled = true
 				return "", nil
@@ -277,6 +338,9 @@ func TestProcessor_ProcessMarkdown(t *testing.T) {
 			}},
 			&mockTranslator{fn: func(_ context.Context, _ []byte, _ string) ([]byte, string, error) {
 				return nil, "", nil
+			}},
+			&mockVerifier{fn: func(_ context.Context, _ []byte, _ string, _ []byte, _ string) (gemini.Verification, error) {
+				return gemini.Verification{HasChineseText: false, PreservesContent: true}, nil
 			}},
 			&mockUploader{fn: func(_ context.Context, _ string, _ []byte, _ string) (string, error) {
 				return "", nil

@@ -135,3 +135,50 @@ func TestClientSetImageSize(t *testing.T) {
 		t.Errorf("ImageSize() should remain unchanged after invalid input, got %q", got)
 	}
 }
+
+func TestParseVerificationJSON(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want Verification
+	}{
+		{
+			name: "passing verification",
+			raw:  `{"has_chinese_text": false, "preserves_content": true, "reason": "all elements preserved"}`,
+			want: Verification{HasChineseText: false, PreservesContent: true, Reason: "all elements preserved"},
+		},
+		{
+			name: "still has Chinese text",
+			raw:  `{"has_chinese_text": true, "preserves_content": true, "reason": "Chinese label remains"}`,
+			want: Verification{HasChineseText: true, PreservesContent: true, Reason: "Chinese label remains"},
+		},
+		{
+			name: "missing content",
+			raw:  `{"has_chinese_text": false, "preserves_content": false, "reason": "right sidebar removed"}`,
+			want: Verification{HasChineseText: false, PreservesContent: false, Reason: "right sidebar removed"},
+		},
+		{
+			name: "wrapped in json markdown fence",
+			raw:  "```json\n{\"has_chinese_text\": false, \"preserves_content\": true, \"reason\": \"ok\"}\n```",
+			want: Verification{HasChineseText: false, PreservesContent: true, Reason: "ok"},
+		},
+		{
+			name: "invalid json fails conservatively",
+			raw:  `not valid json`,
+			want: Verification{HasChineseText: false, PreservesContent: false, Reason: "invalid verification JSON"},
+		},
+		{
+			name: "empty response fails conservatively",
+			raw:  "",
+			want: Verification{HasChineseText: false, PreservesContent: false, Reason: "invalid verification JSON"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseVerificationJSON(tt.raw); got != tt.want {
+				t.Errorf("parseVerificationJSON(%q) = %+v, want %+v", tt.raw, got, tt.want)
+			}
+		})
+	}
+}

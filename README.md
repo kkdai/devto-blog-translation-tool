@@ -7,7 +7,7 @@ A command-line tool that automatically translates your Dev.to draft articles fro
 ## Features
 
 - 🔍 Automatically fetches **all** draft articles from your Dev.to account (supports pagination for 300+ articles)
-- 🌐 Translates article titles and content to English using Gemini 3 Flash
+- 🌐 Translates article titles and content to English using Gemini 4 Neon (`gemini-4-neon`, overridable via `GEMINI_TEXT_MODEL`)
 - 🖼️ Optional image translation — detects images containing Chinese text, recreates English versions with Gemini, uploads them to Google Cloud Storage, and replaces the image URLs
 - 🧠 Smart language detection — automatically skips articles that already have English titles
 - 📝 Preserves markdown formatting, code blocks, and technical terms
@@ -64,9 +64,9 @@ GEMINI_API_KEY=your_gemini_api_key_here
 
 ### Google Cloud Storage (Optional — Chinese Image Translation)
 
-When `GCS_BUCKET` is set, the tool scans each article for images (`![alt](url)` and `<img src="url">`), detects Chinese text with Gemini, generates an English version of any image that contains Chinese text (matching the closest supported aspect ratio at the configured output resolution), verifies the generated image no longer contains Chinese text, uploads it to GCS (`devto-images/<articleID>/<sha256-prefix>-en.<ext>`), and replaces the URL in the article before translating the body.
+When `GCS_BUCKET` is set, the tool scans each article for images (`![alt](url)` and `<img src="url">`), detects Chinese text with Gemini, generates an English version of any image that contains Chinese text (matching the closest supported aspect ratio at the configured output resolution), verifies the generated image against the original (checking that no Chinese text remains and all major visual elements are preserved), uploads it to GCS (`devto-images/<articleID>/<sha256-prefix>-en.<ext>`), and replaces the URL in the article before translating the body.
 
-Text-dense infographics or diagrams whose estimated Chinese character count exceeds `IMAGE_MAX_CHINESE_CHARS` (default `60`) are skipped automatically and keep their original image, because redrawing dense text often produces garbled characters. Similarly, if post-generation verification still detects Chinese text (or fails), the original image is kept.
+Text-dense infographics or diagrams whose estimated Chinese character count exceeds `IMAGE_MAX_CHINESE_CHARS` (default `60`) are skipped automatically and keep their original image, because redrawing dense text often produces garbled characters. Similarly, if post-generation verification still detects Chinese text, reports missing content, or fails, the original image is kept.
 
 If `GCS_BUCKET` is not set, image translation is disabled and the tool runs as usual.
 
@@ -83,9 +83,11 @@ Setup steps:
    ```
 3. Configure `.env`:
    ```env
+   # Optional: text translation & verification model (defaults to gemini-4-neon)
+   GEMINI_TEXT_MODEL=gemini-4-neon
    GCS_BUCKET=YOUR_BUCKET_NAME
-   # Optional (defaults to gemini-3-pro-image-preview)
-   GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview
+   # Optional (defaults to gemini-3-pro-image)
+   GEMINI_IMAGE_MODEL=gemini-3-pro-image
    # Optional: 1K, 2K, or 4K (defaults to 2K)
    GEMINI_IMAGE_SIZE=2K
    # Optional: skip text-dense images above this Chinese character count (defaults to 60)
@@ -223,9 +225,9 @@ Dev.to rejects titles longer than 128 characters. Translated titles are truncate
 
 ### Token Budget
 
-Gemini 3 Flash is a thinking model: its internal reasoning tokens count against `MaxOutputTokens`. The limits are therefore set generously — 65,536 for article bodies and 4,096 for titles — because a tight budget gets consumed by reasoning and truncates the output mid-sentence. Billing is based on tokens actually used, so a high ceiling costs nothing extra.
+Gemini 4 Neon (`gemini-4-neon`) is a thinking model: its internal reasoning tokens count against `MaxOutputTokens`. The limits are therefore set generously — 65,536 for article bodies and 4,096 for titles — because a tight budget gets consumed by reasoning and truncates the output mid-sentence. Billing is based on tokens actually used, so a high ceiling costs nothing extra.
 
-If a response still stops at the limit, the tool detects `FinishReasonMaxTokens` and reports a truncation error rather than publishing a half-translated article.
+If a response still stops at `FinishReasonMaxTokens` (or returns empty content), the tool automatically retries once before reporting a truncation error rather than publishing a half-translated article.
 
 ## Frontmatter Handling
 

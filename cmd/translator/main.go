@@ -27,6 +27,7 @@ func main() {
 	devtoAPIKey := os.Getenv("DEVTO_API_KEY")
 	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
 	gcsBucket := strings.TrimSpace(os.Getenv("GCS_BUCKET"))
+	geminiTextModel := strings.TrimSpace(os.Getenv("GEMINI_TEXT_MODEL"))
 	geminiImageModel := strings.TrimSpace(os.Getenv("GEMINI_IMAGE_MODEL"))
 	geminiImageSize := strings.TrimSpace(os.Getenv("GEMINI_IMAGE_SIZE"))
 	imageMaxChineseCharsRaw := strings.TrimSpace(os.Getenv("IMAGE_MAX_CHINESE_CHARS"))
@@ -49,6 +50,9 @@ func main() {
 	// Initialize clients
 	devtoClient := devto.NewClient(devtoAPIKey)
 	geminiClient := gemini.NewClient(geminiAPIKey)
+	if geminiTextModel != "" {
+		geminiClient.SetTextModel(geminiTextModel)
+	}
 	if geminiImageModel != "" {
 		geminiClient.SetImageModel(geminiImageModel)
 	}
@@ -57,6 +61,7 @@ func main() {
 			fmt.Printf("⚠️  Invalid GEMINI_IMAGE_SIZE %q (%v), using default %s\n", geminiImageSize, err, geminiClient.ImageSize())
 		}
 	}
+	fmt.Printf("✅ Gemini text model: %s\n", geminiClient.TextModel())
 
 	// Create translation service
 	service := translator.NewService(devtoClient, geminiClient)
@@ -69,7 +74,7 @@ func main() {
 		}
 		defer uploader.Close()
 
-		imgProcessor := images.NewProcessor(geminiClient, geminiClient, uploader)
+		imgProcessor := images.NewProcessor(geminiClient, geminiClient, geminiClient, uploader)
 		if imageMaxChineseCharsRaw != "" {
 			maxChars, err := strconv.Atoi(imageMaxChineseCharsRaw)
 			if err != nil || maxChars <= 0 {

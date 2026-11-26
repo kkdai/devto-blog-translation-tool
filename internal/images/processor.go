@@ -37,6 +37,11 @@ type ImageTranslator interface {
 	TranslateImage(ctx context.Context, imageData []byte, mimeType string) ([]byte, string, error)
 }
 
+// ImageVerifier compares the original and translated images to verify quality.
+type ImageVerifier interface {
+	VerifyTranslatedImage(ctx context.Context, original []byte, originalMIME string, generated []byte, generatedMIME string) (gemini.Verification, error)
+}
+
 // Uploader uploads generated image bytes and returns a public URL.
 type Uploader interface {
 	Upload(ctx context.Context, objectName string, data []byte, contentType string) (string, error)
@@ -49,17 +54,19 @@ type Processor struct {
 	maxChineseChars int
 	detector        ChineseDetector
 	translator      ImageTranslator
+	verifier        ImageVerifier
 	uploader        Uploader
 }
 
 // NewProcessor creates a new image Processor with default HTTP timeout and size limit.
-func NewProcessor(detector ChineseDetector, translator ImageTranslator, uploader Uploader) *Processor {
+func NewProcessor(detector ChineseDetector, translator ImageTranslator, verifier ImageVerifier, uploader Uploader) *Processor {
 	return &Processor{
 		httpClient:      &http.Client{Timeout: DefaultHTTPTimeout},
 		maxBytes:        DefaultMaxImageBytes,
 		maxChineseChars: DefaultMaxChineseChars,
 		detector:        detector,
 		translator:      translator,
+		verifier:        verifier,
 		uploader:        uploader,
 	}
 }
@@ -138,13 +145,21 @@ func (p *Processor) ProcessMarkdown(ctx context.Context, articleID int, markdown
 			continue
 		}
 
-		verifyDetection, err := p.detector.DetectChineseText(ctx, translatedData, outMIME)
+		verification, err := p.verifier.VerifyTranslatedImage(ctx, data, mimeType, translatedData, outMIME)
 		if err != nil {
 			fmt.Printf("⚠️  verification failed (%v), keeping original\n", err)
 			continue
 		}
-		if verifyDetection.HasChinese {
+		if verification.HasChineseText {
 			fmt.Println("⚠️  generated image still contains Chinese text, keeping original")
+			continue
+		}
+		if !verification.PreservesContent {
+			reason := verification.Reason
+			if reason == "" {
+				reason = "missing elements"
+			}
+			fmt.Printf("⚠️  generated image lost content (%s), keeping original\n", reason)
 			continue
 		}
 

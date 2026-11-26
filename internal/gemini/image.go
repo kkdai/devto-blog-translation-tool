@@ -18,6 +18,10 @@ import (
 const (
 	detectChinesePrompt  = `Does this image contain any Chinese characters (Traditional or Simplified Chinese text)? Estimate the total number of Chinese characters visible in the image. Respond ONLY with a JSON object in the exact format {"has_chinese_text": true, "chinese_char_count": 12} or {"has_chinese_text": false, "chinese_char_count": 0}. Do not include any other text.`
 	translateImagePrompt = `Recreate this image exactly, keeping layout, style, colors, icons and non-text content identical, but translate all Chinese text into natural English. Keep code, URLs, and proper nouns as-is.`
+	verifyImagePrompt    = `The first image is the original image, and the second image is its English-translated version. Compare both images carefully and check two things:
+1. Does the second image still contain any Chinese characters (Traditional or Simplified Chinese text)?
+2. Does the second image preserve all major UI elements, panels, dialogs, chart/diagram sections, and information from the first image (with only the text language changed to English)? If any major element is missing, removed, cropped, or has noticeably different content, set preserves_content to false.
+Respond ONLY with a JSON object in the exact format {"has_chinese_text": false, "preserves_content": true, "reason": "short string"}. Do not include any other text.`
 )
 
 // Detection holds the result of checking an image for Chinese text.
@@ -26,9 +30,22 @@ type Detection struct {
 	ChineseChars int
 }
 
+// Verification holds the result of comparing an original image with its translated version.
+type Verification struct {
+	HasChineseText   bool
+	PreservesContent bool
+	Reason           string
+}
+
 type chineseDetectionResult struct {
 	HasChineseText   bool `json:"has_chinese_text"`
 	ChineseCharCount int  `json:"chinese_char_count"`
+}
+
+type verificationResult struct {
+	HasChineseText   bool   `json:"has_chinese_text"`
+	PreservesContent bool   `json:"preserves_content"`
+	Reason           string `json:"reason"`
 }
 
 type aspectRatioOption struct {
@@ -134,6 +151,66 @@ func parseChineseDetectionJSON(raw string) Detection {
 	return Detection{
 		HasChinese:   result.HasChineseText,
 		ChineseChars: result.ChineseCharCount,
+	}
+}
+
+// VerifyTranslatedImage compares the original image and the generated English image
+// using the configured Gemini text model to verify no Chinese text remains and all
+// major visual elements and information are preserved.
+// If the model response cannot be parsed as JSON, it conservatively returns
+// Verification{PreservesContent: false}.
+func (c *Client) VerifyTranslatedImage(ctx context.Context, original []byte, originalMIME string, generated []byte, generatedMIME string) (Verification, error) {
+	client, err := c.newGenAIClient(ctx)
+	if err != nil {
+		return Verification{}, fmt.Errorf("failed to create Gemini client: %w", err)
+	}
+
+	contents := []*genai.Content{
+		genai.NewContentFromParts([]*genai.Part{
+			genai.NewPartFromBytes(original, originalMIME),
+			genai.NewPartFromBytes(generated, generatedMIME),
+			genai.NewPartFromText(verifyImagePrompt),
+		}, genai.RoleUser),
+	}
+
+	var temp float32 = 0
+	config := &genai.GenerateContentConfig{
+		Temperature:      &temp,
+		ResponseMIMEType: "application/json",
+	}
+
+	resp, err := client.Models.GenerateContent(ctx, c.model, contents, config)
+	if err != nil {
+		return Verification{}, fmt.Errorf("failed to verify translated image: %w", err)
+	}
+
+	return parseVerificationJSON(resp.Text()), nil
+}
+
+// parseVerificationJSON extracts verification fields from a JSON string.
+// Conservatively returns PreservesContent: false if parsing fails.
+func parseVerificationJSON(raw string) Verification {
+	cleaned := strings.TrimSpace(raw)
+	if strings.HasPrefix(cleaned, "```") {
+		cleaned = strings.TrimPrefix(cleaned, "```json")
+		cleaned = strings.TrimPrefix(cleaned, "```JSON")
+		cleaned = strings.TrimPrefix(cleaned, "```")
+		cleaned = strings.TrimSuffix(cleaned, "```")
+		cleaned = strings.TrimSpace(cleaned)
+	}
+
+	var result verificationResult
+	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
+		return Verification{
+			HasChineseText:   false,
+			PreservesContent: false,
+			Reason:           "invalid verification JSON",
+		}
+	}
+	return Verification{
+		HasChineseText:   result.HasChineseText,
+		PreservesContent: result.PreservesContent,
+		Reason:           strings.TrimSpace(result.Reason),
 	}
 }
 
