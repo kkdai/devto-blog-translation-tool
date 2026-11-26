@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/al03034132/devto-blog-translation-tool/internal/devto"
@@ -27,6 +28,8 @@ func main() {
 	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
 	gcsBucket := strings.TrimSpace(os.Getenv("GCS_BUCKET"))
 	geminiImageModel := strings.TrimSpace(os.Getenv("GEMINI_IMAGE_MODEL"))
+	geminiImageSize := strings.TrimSpace(os.Getenv("GEMINI_IMAGE_SIZE"))
+	imageMaxChineseCharsRaw := strings.TrimSpace(os.Getenv("IMAGE_MAX_CHINESE_CHARS"))
 
 	// Validate API keys
 	if devtoAPIKey == "" {
@@ -49,6 +52,11 @@ func main() {
 	if geminiImageModel != "" {
 		geminiClient.SetImageModel(geminiImageModel)
 	}
+	if geminiImageSize != "" {
+		if err := geminiClient.SetImageSize(geminiImageSize); err != nil {
+			fmt.Printf("⚠️  Invalid GEMINI_IMAGE_SIZE %q (%v), using default %s\n", geminiImageSize, err, geminiClient.ImageSize())
+		}
+	}
 
 	// Create translation service
 	service := translator.NewService(devtoClient, geminiClient)
@@ -62,8 +70,17 @@ func main() {
 		defer uploader.Close()
 
 		imgProcessor := images.NewProcessor(geminiClient, geminiClient, uploader)
+		if imageMaxChineseCharsRaw != "" {
+			maxChars, err := strconv.Atoi(imageMaxChineseCharsRaw)
+			if err != nil || maxChars <= 0 {
+				fmt.Printf("⚠️  Invalid IMAGE_MAX_CHINESE_CHARS %q, using default %d\n", imageMaxChineseCharsRaw, imgProcessor.MaxChineseChars())
+			} else {
+				imgProcessor.WithMaxChineseChars(maxChars)
+			}
+		}
 		service.SetImageProcessor(imgProcessor)
-		fmt.Printf("✅ Image translation enabled (GCS bucket: %s, model: %s)\n", gcsBucket, geminiClient.ImageModel())
+		fmt.Printf("✅ Image translation enabled (GCS bucket: %s, model: %s, size: %s, max Chinese chars: %d)\n",
+			gcsBucket, geminiClient.ImageModel(), geminiClient.ImageSize(), imgProcessor.MaxChineseChars())
 	} else {
 		fmt.Println("ℹ️  GCS_BUCKET not set; Chinese image translation is disabled")
 	}

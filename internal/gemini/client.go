@@ -4,19 +4,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/generative-ai-go/genai"
 	"google.golang.org/api/option"
 )
 
-// DefaultImageModel is the default Gemini model used for translating images.
-const DefaultImageModel = "gemini-3-pro-image-preview"
+const (
+	// DefaultImageModel is the default Gemini model used for translating images.
+	DefaultImageModel = "gemini-3-pro-image-preview"
+	// DefaultImageSize is the default output resolution for translated images.
+	DefaultImageSize = "2K"
+)
 
 // Client represents a Gemini API client
 type Client struct {
 	apiKey     string
 	model      string
 	imageModel string
+	imageSize  string
 }
 
 // NewClient creates a new Gemini API client
@@ -25,6 +31,7 @@ func NewClient(apiKey string) *Client {
 		apiKey:     apiKey,
 		model:      "gemini-3-flash-preview", // Using the latest available model
 		imageModel: DefaultImageModel,
+		imageSize:  DefaultImageSize,
 	}
 }
 
@@ -38,6 +45,27 @@ func (c *Client) SetImageModel(model string) {
 // ImageModel returns the configured Gemini model used for image generation.
 func (c *Client) ImageModel() string {
 	return c.imageModel
+}
+
+// SetImageSize overrides the output image size ("1K", "2K", or "4K").
+// Returns an error and leaves the current size unchanged if the value is invalid.
+func (c *Client) SetImageSize(size string) error {
+	normalized := strings.ToUpper(strings.TrimSpace(size))
+	switch normalized {
+	case "1K", "2K", "4K":
+		c.imageSize = normalized
+		return nil
+	default:
+		return fmt.Errorf("unsupported image size %q (allowed: 1K, 2K, 4K)", size)
+	}
+}
+
+// ImageSize returns the configured output image size.
+func (c *Client) ImageSize() string {
+	if c.imageSize == "" {
+		return DefaultImageSize
+	}
+	return c.imageSize
 }
 
 // Translate translates text to English using Gemini

@@ -64,7 +64,9 @@ GEMINI_API_KEY=your_gemini_api_key_here
 
 ### Google Cloud Storage (Optional — Chinese Image Translation)
 
-When `GCS_BUCKET` is set, the tool scans each article for images (`![alt](url)` and `<img src="url">`), detects Chinese text with Gemini, generates an English version of any image that contains Chinese text, uploads it to GCS (`devto-images/<articleID>/<sha256-prefix>-en.<ext>`), and replaces the URL in the article before translating the body.
+When `GCS_BUCKET` is set, the tool scans each article for images (`![alt](url)` and `<img src="url">`), detects Chinese text with Gemini, generates an English version of any image that contains Chinese text (matching the closest supported aspect ratio at the configured output resolution), verifies the generated image no longer contains Chinese text, uploads it to GCS (`devto-images/<articleID>/<sha256-prefix>-en.<ext>`), and replaces the URL in the article before translating the body.
+
+Text-dense infographics or diagrams whose estimated Chinese character count exceeds `IMAGE_MAX_CHINESE_CHARS` (default `60`) are skipped automatically and keep their original image, because redrawing dense text often produces garbled characters. Similarly, if post-generation verification still detects Chinese text (or fails), the original image is kept.
 
 If `GCS_BUCKET` is not set, image translation is disabled and the tool runs as usual.
 
@@ -84,6 +86,10 @@ Setup steps:
    GCS_BUCKET=YOUR_BUCKET_NAME
    # Optional (defaults to gemini-3-pro-image-preview)
    GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview
+   # Optional: 1K, 2K, or 4K (defaults to 2K)
+   GEMINI_IMAGE_SIZE=2K
+   # Optional: skip text-dense images above this Chinese character count (defaults to 60)
+   IMAGE_MAX_CHINESE_CHARS=60
    ```
 
 ## Usage

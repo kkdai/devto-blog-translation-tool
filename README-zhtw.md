@@ -64,7 +64,9 @@ GEMINI_API_KEY=your_gemini_api_key_here
 
 ### Google Cloud Storage（選用 — 含中文圖片翻譯）
 
-設定 `GCS_BUCKET` 後，工具會在翻譯內文前掃描文章中的圖片（`![alt](url)` 與 `<img src="url">`），用 Gemini 偵測圖片是否含有中文；若有中文則生成英文版圖片、上傳至 GCS（路徑 `devto-images/<articleID>/<sha256前16碼>-en.<ext>`），並把文章內的圖片網址替換為新的公開 GCS 網址。
+設定 `GCS_BUCKET` 後，工具會在翻譯內文前掃描文章中的圖片（`![alt](url)` 與 `<img src="url">`），用 Gemini 偵測圖片是否含有中文；若有中文則依原圖最接近的支援比例與指定解析度生成英文版圖片，並對生成結果再次驗證確認已無中文後，才上傳至 GCS（路徑 `devto-images/<articleID>/<sha256前16碼>-en.<ext>`）並替換文章內的圖片網址。
+
+文字密集的資訊圖或架構圖若估計中文字數超過 `IMAGE_MAX_CHINESE_CHARS`（預設 `60`），會直接跳過重畫並保留原圖，以避免重繪時出現亂碼或錯字；若生成後驗證仍偵測到中文（或驗證失敗），也會保守保留原圖不上傳。
 
 若未設定 `GCS_BUCKET`，圖片翻譯功能會自動停用，其餘翻譯流程完全照舊。
 
@@ -84,6 +86,10 @@ GEMINI_API_KEY=your_gemini_api_key_here
    GCS_BUCKET=YOUR_BUCKET_NAME
    # 選用（預設為 gemini-3-pro-image-preview）
    GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview
+   # 選用：輸出解析度 1K、2K 或 4K（預設為 2K）
+   GEMINI_IMAGE_SIZE=2K
+   # 選用：超過此估計中文字數的密集圖片直接跳過（預設為 60）
+   IMAGE_MAX_CHINESE_CHARS=60
    ```
 
 ## 使用方式

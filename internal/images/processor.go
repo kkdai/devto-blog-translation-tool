@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/al03034132/devto-blog-translation-tool/internal/gemini"
 )
 
 const (
@@ -18,13 +20,16 @@ const (
 	DefaultMaxImageBytes int64 = 20 * 1024 * 1024
 	// DefaultHTTPTimeout is the timeout for downloading an image.
 	DefaultHTTPTimeout = 30 * time.Second
+	// DefaultMaxChineseChars is the maximum estimated Chinese character count
+	// allowed before an image is skipped as too text-dense to redraw cleanly.
+	DefaultMaxChineseChars = 60
 )
 
 var errSkipGIF = errors.New("gif images are skipped")
 
 // ChineseDetector checks whether an image contains Chinese text.
 type ChineseDetector interface {
-	DetectChineseText(ctx context.Context, imageData []byte, mimeType string) (bool, error)
+	DetectChineseText(ctx context.Context, imageData []byte, mimeType string) (gemini.Detection, error)
 }
 
 // ImageTranslator generates an English version of an image containing Chinese text.
@@ -39,21 +44,23 @@ type Uploader interface {
 
 // Processor scans markdown for images, translates those containing Chinese text, and uploads them.
 type Processor struct {
-	httpClient *http.Client
-	maxBytes   int64
-	detector   ChineseDetector
-	translator ImageTranslator
-	uploader   Uploader
+	httpClient      *http.Client
+	maxBytes        int64
+	maxChineseChars int
+	detector        ChineseDetector
+	translator      ImageTranslator
+	uploader        Uploader
 }
 
 // NewProcessor creates a new image Processor with default HTTP timeout and size limit.
 func NewProcessor(detector ChineseDetector, translator ImageTranslator, uploader Uploader) *Processor {
 	return &Processor{
-		httpClient: &http.Client{Timeout: DefaultHTTPTimeout},
-		maxBytes:   DefaultMaxImageBytes,
-		detector:   detector,
-		translator: translator,
-		uploader:   uploader,
+		httpClient:      &http.Client{Timeout: DefaultHTTPTimeout},
+		maxBytes:        DefaultMaxImageBytes,
+		maxChineseChars: DefaultMaxChineseChars,
+		detector:        detector,
+		translator:      translator,
+		uploader:        uploader,
 	}
 }
 
@@ -71,6 +78,20 @@ func (p *Processor) WithMaxBytes(maxBytes int64) *Processor {
 		p.maxBytes = maxBytes
 	}
 	return p
+}
+
+// WithMaxChineseChars overrides the maximum estimated Chinese character count
+// allowed before an image is skipped.
+func (p *Processor) WithMaxChineseChars(max int) *Processor {
+	if max > 0 {
+		p.maxChineseChars = max
+	}
+	return p
+}
+
+// MaxChineseChars returns the configured maximum Chinese character threshold.
+func (p *Processor) MaxChineseChars() int {
+	return p.maxChineseChars
 }
 
 // ProcessMarkdown scans markdown for images, detects Chinese text, generates English versions,
@@ -97,19 +118,33 @@ func (p *Processor) ProcessMarkdown(ctx context.Context, articleID int, markdown
 			continue
 		}
 
-		hasChinese, err := p.detector.DetectChineseText(ctx, data, mimeType)
+		detection, err := p.detector.DetectChineseText(ctx, data, mimeType)
 		if err != nil {
 			fmt.Printf("⚠️  detection failed (%v), keeping original\n", err)
 			continue
 		}
-		if !hasChinese {
+		if !detection.HasChinese {
 			fmt.Println("⏭️  no Chinese text")
+			continue
+		}
+		if p.maxChineseChars > 0 && detection.ChineseChars > p.maxChineseChars {
+			fmt.Printf("⏭️  too much text (~%d Chinese chars), keeping original\n", detection.ChineseChars)
 			continue
 		}
 
 		translatedData, outMIME, err := p.translator.TranslateImage(ctx, data, mimeType)
 		if err != nil {
 			fmt.Printf("⚠️  image generation failed (%v), keeping original\n", err)
+			continue
+		}
+
+		verifyDetection, err := p.detector.DetectChineseText(ctx, translatedData, outMIME)
+		if err != nil {
+			fmt.Printf("⚠️  verification failed (%v), keeping original\n", err)
+			continue
+		}
+		if verifyDetection.HasChinese {
+			fmt.Println("⚠️  generated image still contains Chinese text, keeping original")
 			continue
 		}
 
