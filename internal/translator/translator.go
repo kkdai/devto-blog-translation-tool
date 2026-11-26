@@ -5,11 +5,52 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/al03034132/devto-blog-translation-tool/internal/devto"
 	"github.com/al03034132/devto-blog-translation-tool/internal/gemini"
 	"github.com/al03034132/devto-blog-translation-tool/internal/utils"
 )
+
+const (
+	// Dev.to API enforces a 128-character limit on article titles.
+	maxTitleLen             = 128
+	maxShortenTitleAttempts = 2
+)
+
+type titleFitStatus int
+
+const (
+	titleFitUnchanged titleFitStatus = iota
+	titleFitShortened
+	titleFitTruncated
+)
+
+type titleShortenFunc func(ctx context.Context, title string, maxLen int) (string, error)
+
+// fitTitleToLimit ensures title fits within maxLen runes.
+// If title exceeds maxLen, it calls shorten up to maxShortenTitleAttempts times.
+// If shortening fails or still exceeds maxLen, it falls back to word-boundary truncation.
+func fitTitleToLimit(ctx context.Context, title string, maxLen int, shorten titleShortenFunc) (string, titleFitStatus) {
+	if utf8.RuneCountInString(title) <= maxLen {
+		return title, titleFitUnchanged
+	}
+
+	if shorten != nil {
+		for attempt := 0; attempt < maxShortenTitleAttempts; attempt++ {
+			shortened, err := shorten(ctx, title, maxLen)
+			if err != nil {
+				break
+			}
+			shortened = strings.TrimSpace(shortened)
+			if shortened != "" && utf8.RuneCountInString(shortened) <= maxLen {
+				return shortened, titleFitShortened
+			}
+		}
+	}
+
+	return utils.TruncateAtWordBoundary(title, maxLen), titleFitTruncated
+}
 
 // ImageProcessor detects and replaces images containing Chinese text in markdown.
 type ImageProcessor interface {
@@ -89,16 +130,15 @@ func (s *Service) TranslateDraftArticles(ctx context.Context) ([]TranslatedArtic
 			continue
 		}
 		translatedTitle = strings.TrimSpace(translatedTitle)
-		// Dev.to API enforces a 128-character limit on article titles.
-		const maxTitleLen = 128
-		if runes := []rune(translatedTitle); len(runes) > maxTitleLen {
-			translatedTitle = string(runes[:maxTitleLen])
-			fmt.Printf("✅\n")
-			fmt.Printf("  Translated Title: %s\n", translatedTitle)
-			fmt.Printf("  ⚠️  Title truncated to %d characters (Dev.to limit)\n", maxTitleLen)
-		} else {
-			fmt.Printf("✅\n")
-			fmt.Printf("  Translated Title: %s\n", translatedTitle)
+		var fitStatus titleFitStatus
+		translatedTitle, fitStatus = fitTitleToLimit(ctx, translatedTitle, maxTitleLen, s.geminiClient.ShortenTitle)
+		fmt.Printf("✅\n")
+		fmt.Printf("  Translated Title: %s\n", translatedTitle)
+		switch fitStatus {
+		case titleFitShortened:
+			fmt.Printf("  ✂️  Title shortened to %d characters (Dev.to limit)\n", utf8.RuneCountInString(translatedTitle))
+		case titleFitTruncated:
+			fmt.Printf("  ⚠️  Title truncated at word boundary to %d characters (Dev.to limit)\n", utf8.RuneCountInString(translatedTitle))
 		}
 
 		// Remove frontmatter before translation

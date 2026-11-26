@@ -173,10 +173,10 @@ func (c *Client) TranslateTitle(ctx context.Context, title string) (string, erro
 	model.SetTopP(0.95)
 	model.SetTopK(40)
 	// gemini-4-neon is a thinking model: internal reasoning tokens count
-	// against MaxOutputTokens. A tight limit (e.g. 256) gets consumed by
-	// thinking and truncates the title mid-output, so allow generous headroom.
+	// against MaxOutputTokens. Even 4096 can be exhausted by thinking on
+	// short title tasks, truncating the output mid-way, so allow 16384.
 	// Billing is on tokens actually used, so a high ceiling has no cost downside.
-	model.SetMaxOutputTokens(4096)
+	model.SetMaxOutputTokens(16384)
 
 	prompt := fmt.Sprintf(`Translate this article title to English.
 If it's already in English, return it as-is.
@@ -189,5 +189,38 @@ Translated title:`, title)
 
 	return retryOnceOnMaxTokens(func() (string, bool, error) {
 		return generateTranslationOnce(ctx, model, prompt, "title translation truncated: hit MaxOutputTokens (thinking model consumed the token budget)")
+	})
+}
+
+// ShortenTitle rewrites an English title so that it fits within maxLen characters.
+func (c *Client) ShortenTitle(ctx context.Context, title string, maxLen int) (string, error) {
+	client, err := genai.NewClient(ctx, option.WithAPIKey(c.apiKey))
+	if err != nil {
+		return "", fmt.Errorf("failed to create Gemini client: %w", err)
+	}
+	defer client.Close()
+
+	model := client.GenerativeModel(c.model)
+
+	model.SetTemperature(0.3)
+	model.SetTopP(0.95)
+	model.SetTopK(40)
+	// gemini-4-neon is a thinking model: internal reasoning tokens count
+	// against MaxOutputTokens. Even 4096 can be exhausted by thinking on
+	// title shortening, so allow 16384. Billing is on tokens actually used,
+	// so a high ceiling has no cost downside.
+	model.SetMaxOutputTokens(16384)
+
+	prompt := fmt.Sprintf(`Rewrite the following English article title so that it is %d characters or fewer (including spaces and punctuation).
+Preserve any leading bracketed prefix tag (e.g., [Notes], [Tech]) and the key information.
+Keep it concise, natural, and complete.
+Only return the shortened title, nothing else.
+
+Title: %s
+
+Shortened title:`, maxLen, title)
+
+	return retryOnceOnMaxTokens(func() (string, bool, error) {
+		return generateTranslationOnce(ctx, model, prompt, "title shortening truncated: hit MaxOutputTokens (thinking model consumed the token budget)")
 	})
 }
